@@ -1,0 +1,13 @@
+{
+    "autoload": {
+        "files": [
+            "helper.php"
+        ],
+        "psr-4": {
+            "lv\\": "./src"
+        }
+    },
+    "require": {
+        "amphp/amp": "^2"
+    }
+}
