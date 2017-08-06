@@ -6,6 +6,7 @@ use Amp\Loop;
 gc_disable();
 
 $server = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+socket_set_option($server, SOL_SOCKET, SO_REUSEADDR, 1);
 socket_set_nonblock($server);
 socket_bind($server, '0.0.0.0', 8080);
 socket_listen($server, 256);
@@ -32,7 +33,10 @@ Loop::onReadable($server, function ($id, $server) {
         $data = request($client);
 
         if (substr($data, 0, 10) == 'GET /sleep') {
-            lv\sleep(20000);
+            lv\sleep(9000);
+        } elseif (substr($data, 0, 8) == 'GET /dig') {
+            $ips = lv\dig("www.baidu.com");
+            var_dump($ips);
         }
 
         response($client, $data);

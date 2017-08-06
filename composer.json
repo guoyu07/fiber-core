@@ -8,6 +8,7 @@
         }
     },
     "require": {
-        "amphp/amp": "^2"
+        "amphp/amp": "^2",
+         "daverandom/libdns": "v2.0.0-a1"
     }
 }
