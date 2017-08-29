@@ -11,35 +11,42 @@ socket_set_nonblock($server);
 socket_bind($server, '0.0.0.0', 8080);
 socket_listen($server, 256);
 
-function request($client)
-{
-    return lv\read($client, 1024);
-}
-
-function response($client, $data)
-{
-    $data = trim($data);
-
-    lv\write($client, "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello");
-
-    socket_close($client);
-}
-
 Loop::onReadable($server, function ($id, $server) {
     $client = socket_accept($server);
     socket_set_nonblock($client);
+    socket_setopt($client, SOL_SOCKET, SO_RCVBUF, 1);
 
     $fiber = new Fiber(function ($client) {
-        $data = request($client);
+        $headers = lv\find($client, "\r\n\r\n");
+        $headers = explode("\r\n", $headers);
+        $method = array_shift($headers);
+        $headers = array_map(function ($header) {
+            return preg_split('/:\s+/', $header);
+        }, $headers);
 
-        if (substr($data, 0, 10) == 'GET /sleep') {
-            lv\sleep(9000);
-        } elseif (substr($data, 0, 8) == 'GET /dig') {
-            $ips = lv\dig("www.baidu.com");
-            var_dump($ips);
+        $length = 0;
+        foreach ($headers as list($name, $value)) {
+            echo $name, ": ", $value, "\n";
+            if ($name === 'Content-Length') {
+                $length = (int) $value;
+            }
         }
 
-        response($client, $data);
+        $body = lv\read($client, $length);
+
+        if (substr($method, 0, 10) == 'GET /sleep') {
+            lv\sleep(9000);
+        } elseif (substr($method, 0, 8) == 'GET /dig') {
+            $ips = lv\dig("www.baidu.com");
+            $body = json_encode($ips);
+        }
+
+        lv\write($client, "HTTP/1.0 200 OK\r\nContent-Type:application/json\r\nContent-Length: ");
+        lv\write($client, strlen($body));
+        lv\write($client, "\r\n\r\n");
+        lv\write($client, $body);
+
+        socket_close($client);
     });
 
     $ret = $fiber->resume($client);
