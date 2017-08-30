@@ -15,44 +15,68 @@ use LibDNS\Records\ResourceQTypes;
 use LibDNS\Encoder\EncoderFactory;
 use LibDNS\Decoder\DecoderFactory;
 
-function read0($fd, int $len)
+function read0($fd, int $len, int $timeout_ms = 0)
 {
-    return await [AWAIT_READ_AT_MOST, $fd, $len];
+    return await [AWAIT_READ_AT_MOST, $fd, $len, $timeout_ms];
 }
 
-function read($fd, int $len)
+function read($fd, int $len, int $timeout_ms = 0)
 {
-    return await [AWAIT_READ_BY_LENGTH, $fd, $len];
+    return await [AWAIT_READ_BY_LENGTH, $fd, $len, $timeout_ms];
 }
 
-function find($fd, string $stops)
+function find($fd, string $stops, int $timeout_ms = 0)
 {
-    return await [AWAIT_READ_BY_STOP, $fd, $stops];
+    return await [AWAIT_READ_BY_STOP, $fd, $stops, $timeout_ms];
 }
 
-function write($fd, string $buf)
+function write($fd, string $buf, int $timeout_ms = 0)
 {
-    return await [AWAIT_WRITE_ALL, $fd, $buf];
+    return await [AWAIT_WRITE_ALL, $fd, $buf, $timeout_ms];
 }
 
 function sleep(int $delay_ms)
 {
-    await [AWAIT_SLEEP, null, $delay_ms];
+    await [AWAIT_SLEEP, null, null, $delay_ms];
 }
 
-function await_read_at_most(\Fiber $fiber, $fd, $len)
+function await_timeout(\Fiber $fiber, $id, $timeout_ms)
+{
+    if ($timeout_ms <= 0) {
+        return;
+    }
+
+    $fiber->$id = Loop::delay($timeout_ms, function ($_id, $fiber) use($id) {
+        if (isset($fiber->$id)) {
+            Loop::cancel($id);
+            unset($fiber->$id);
+
+            $ret = $fiber->resume(false);
+            return run($fiber, $ret);
+        }
+    }, $fiber);
+}
+
+function await_read_at_most(\Fiber $fiber, $fd, $len, $timeout_ms)
 {
     $fiber->to_read_len = $len;
-    Loop::onReadable($fd, function ($id, $fd, $fiber) {
+    $id = Loop::onReadable($fd, function ($id, $fd, $fiber) {
         Loop::cancel($id);
+        if (isset($fiber->$id)) {
+            Loop::cancel($fiber->$id);
+            unset($fiber->$id);
+        }
+
         $buf = socket_read($fd, $fiber->to_read_len);
         unset($fiber->to_read_len);
         $ret = $fiber->resume($buf);
         return run($fiber, $ret);
     }, $fiber);
+
+    await_timeout($fiber, $id, $timeout_ms);
 }
 
-function await_read_by_length(\Fiber $fiber, $fd, $len)
+function await_read_by_length(\Fiber $fiber, $fd, $len, $timeout_ms)
 {
     if (isset($fiber->to_read_buf) && strlen($fiber->to_read_buf) >= $len) {
         $buf = substr($fiber->to_read_buf, 0, $len);
@@ -65,7 +89,7 @@ function await_read_by_length(\Fiber $fiber, $fd, $len)
     }
 
     $fiber->to_read_len = $len;
-    Loop::onReadable($fd, function ($id, $fd, $fiber) {
+    $id = Loop::onReadable($fd, function ($id, $fd, $fiber) {
         $buf = socket_read($fd, $fiber->to_read_len);
 
         if ($buf) {
@@ -79,6 +103,10 @@ function await_read_by_length(\Fiber $fiber, $fd, $len)
 
         if ($buf_len >= $fiber->to_read_len) {
             Loop::cancel($id);
+            if (isset($fiber->$id)) {
+                Loop::cancel($fiber->$id);
+                unset($fiber->$id);
+            }
 
             $buf = substr($fiber->to_read_buf, 0, $fiber->to_read_len);
             $fiber->to_read_buf = substr($fiber->to_read_buf, $fiber->to_read_len);
@@ -88,9 +116,11 @@ function await_read_by_length(\Fiber $fiber, $fd, $len)
             return run($fiber, $ret);
         }
     }, $fiber);
+
+    await_timeout($fiber, $id, $timeout_ms);
 }
 
-function await_read_by_stop(\Fiber $fiber, $fd, $stops)
+function await_read_by_stop(\Fiber $fiber, $fd, $stops, $timeout_ms)
 {
     if (isset($fiber->to_read_buf)) {
         $pos = strpos($fiber->to_read_buf, $stops);
@@ -104,11 +134,16 @@ function await_read_by_stop(\Fiber $fiber, $fd, $stops)
     }
 
     $fiber->to_read_stops = $stops;
-    Loop::onReadable($fd, function ($id, $fd, $fiber) {
+    $id = Loop::onReadable($fd, function ($id, $fd, $fiber) {
         $buf = socket_read($fd, 1024);
 
-        if ($buf === false && socket_last_error($fd) !== 11) {
+        if ($buf === false && socket_last_error($fd) !== 11 /* EAGAIN */) {
             Loop::cancel($id);
+            if (isset($fiber->$id)) {
+                Loop::cancel($fiber->$id);
+                unset($fiber->$id);
+            }
+
             unset($fiber->to_read_stops);
             unset($fiber->to_read_buf);
             $ret = $fiber->resume(false);
@@ -125,6 +160,11 @@ function await_read_by_stop(\Fiber $fiber, $fd, $stops)
         }
 
         Loop::cancel($id);
+        if (isset($fiber->$id)) {
+            Loop::cancel($fiber->$id);
+            unset($fiber->$id);
+        }
+
         $buf = substr($fiber->to_read_buf, 0, $pos);
         $fiber->to_read_buf = substr($fiber->to_read_buf, strlen($buf) + strlen($fiber->to_read_stops));
         unset($fiber->to_read_stops);
@@ -132,9 +172,11 @@ function await_read_by_stop(\Fiber $fiber, $fd, $stops)
         $ret = $fiber->resume($buf);
         return run($fiber, $ret);
     }, $fiber);
+
+    await_timeout($fiber, $id, $timeout_ms);
 }
 
-function await_write_all(\Fiber $fiber, $fd, $data)
+function await_write_all(\Fiber $fiber, $fd, $data, $timeout_ms)
 {
     $len = socket_write($fd, $data);
 
@@ -144,13 +186,18 @@ function await_write_all(\Fiber $fiber, $fd, $data)
     }
 
     $fiber->to_write_buf = substr($data, $len);
-    Loop::onWritable($fd, function ($id, $fd, $fiber) {
+    $id = Loop::onWritable($fd, function ($id, $fd, $fiber) {
         $buf = $fiber->to_write_buf;
 
         $len = socket_write($fd, $buf);
 
         if ($len === strlen($buf) || $len === false) {
             Loop::cancel($id);
+            if (isset($fiber->$id)) {
+                Loop::cancel($fiber->$id);
+                unset($fiber->$id);
+            }
+
             unset($fiber->to_write_buf);
             $ret = $fiber->resume($len);
             return run($fiber, $ret);
@@ -158,12 +205,13 @@ function await_write_all(\Fiber $fiber, $fd, $data)
 
         $fiber->to_write_buf = substr($buf, $len);
     }, $fiber);
+
+    await_timeout($fiber, $id, $timeout_ms);
 }
 
 function await_sleep(\Fiber $fiber, $delay_ms)
 {
     Loop::delay($delay_ms, function ($id, $fiber) {
-        Loop::cancel($id);
         $ret = $fiber->resume();
         run($fiber, $ret);
     }, $fiber);
@@ -175,52 +223,18 @@ function run(\Fiber $fiber, $ret)
         return;
     }
 
-    list($type, $fd, $data) = $ret;
+    list($type, $fd, $data, $timeout_ms) = $ret;
 
     switch ($type) {
     case AWAIT_READ_AT_MOST:
-        return await_read_at_most($fiber, $fd, $data);
+        return await_read_at_most($fiber, $fd, $data, $timeout_ms);
     case AWAIT_READ_BY_LENGTH:
-        return await_read_by_length($fiber, $fd, $data);
+        return await_read_by_length($fiber, $fd, $data, $timeout_ms);
     case AWAIT_READ_BY_STOP:
-        return await_read_by_stop($fiber, $fd, $data);
+        return await_read_by_stop($fiber, $fd, $data, $timeout_ms);
     case AWAIT_WRITE_ALL:
-        return await_write_all($fiber, $fd, $data);
+        return await_write_all($fiber, $fd, $data, $timeout_ms);
     case AWAIT_SLEEP:
-        return await_sleep($fiber, $data);
+        return await_sleep($fiber, $timeout_ms);
     }
-}
-
-function dig($name, $type = ResourceQTypes::A, $server = '114.114.114.114')
-{
-    $question = (new QuestionFactory)->create(ResourceQTypes::A);
-    $question->setName($name);
-
-    $request = (new MessageFactory)->create(MessageTypes::QUERY);
-    $request->getQuestionRecords()->add($question);
-    $request->isRecursionDesired(true);
-
-    $encoder = (new EncoderFactory)->create();
-
-    $socket = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
-    socket_set_nonblock($socket);
-    socket_connect($socket, $server , 53);
-    write($socket, $encoder->encode($request));
-
-    $decoder = (new DecoderFactory)->create();
-    $response = read0($socket, 512);
-    $response = $decoder->decode($response);
-
-    $ips = [];
-    /** @var \LibDNS\Records\Resource $record */
-    foreach ($response->getAnswerRecords() as $record) {
-        $ips[] = [
-            'name' => (string)$record->getName(),
-            'type' => $record->getType(),
-            'ttl' => $record->getTTL(),
-            'data' => (string)$record->getData(),
-        ];
-    }
-
-    return $ips;
 }
