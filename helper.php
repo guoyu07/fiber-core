@@ -1,5 +1,5 @@
 <?php
-namespace lv;
+namespace f;
 
 const AWAIT_READ_AT_MOST = 4;
 const AWAIT_READ_BY_LENGTH = 0;
@@ -8,14 +8,12 @@ const AWAIT_WRITE_ALL = 1;
 const AWAIT_SLEEP = 2;
 
 use Amp\Loop;
-use \LibDNS\Messages\MessageFactory;
-use \LibDNS\Messages\MessageTypes;
-use \LibDNS\Records\QuestionFactory;
-use \LibDNS\Records\ResourceTypes;
-use \LibDNS\Records\ResourceQTypes;
-use \LibDNS\Encoder\EncoderFactory;
-use \LibDNS\Decoder\DecoderFactory;
-use \LibDNS\Records\TypeDefinitions\TypeDefinitionManagerFactory;
+use LibDNS\Messages\MessageFactory;
+use LibDNS\Messages\MessageTypes;
+use LibDNS\Records\QuestionFactory;
+use LibDNS\Records\ResourceQTypes;
+use LibDNS\Encoder\EncoderFactory;
+use LibDNS\Decoder\DecoderFactory;
 
 function read0($fd, int $len)
 {
@@ -42,6 +40,135 @@ function sleep(int $delay_ms)
     await [AWAIT_SLEEP, null, $delay_ms];
 }
 
+function await_read_at_most(\Fiber $fiber, $fd, $len)
+{
+    $fiber->to_read_len = $len;
+    Loop::onReadable($fd, function ($id, $fd, $fiber) {
+        Loop::cancel($id);
+        $buf = socket_read($fd, $fiber->to_read_len);
+        unset($fiber->to_read_len);
+        $ret = $fiber->resume($buf);
+        return run($fiber, $ret);
+    }, $fiber);
+}
+
+function await_read_by_length(\Fiber $fiber, $fd, $len)
+{
+    if (isset($fiber->to_read_buf) && strlen($fiber->to_read_buf) >= $len) {
+        $buf = substr($fiber->to_read_buf, 0, $len);
+        $fiber->to_read_buf = substr($fiber->to_read_buf, $len);
+
+        $ret = $fiber->resume($buf);
+        return run($fiber, $ret);
+    } elseif (isset($fiber->to_read_buf)) {
+        $len -= strlen($fiber->to_read_buf);
+    }
+
+    $fiber->to_read_len = $len;
+    Loop::onReadable($fd, function ($id, $fd, $fiber) {
+        $buf = socket_read($fd, $fiber->to_read_len);
+
+        if ($buf) {
+            $fiber->to_read_buf .= $buf;
+        }
+
+        $buf_len = strlen($fiber->to_read_buf);
+        if ($buf_len !== false && $buf_len < $fiber->to_read_len) {
+            return;
+        }
+
+        if ($buf_len >= $fiber->to_read_len) {
+            Loop::cancel($id);
+
+            $buf = substr($fiber->to_read_buf, 0, $fiber->to_read_len);
+            $fiber->to_read_buf = substr($fiber->to_read_buf, $fiber->to_read_len);
+            $fiber->to_read_len = 0;
+
+            $ret = $fiber->resume($buf);
+            return run($fiber, $ret);
+        }
+    }, $fiber);
+}
+
+function await_read_by_stop(\Fiber $fiber, $fd, $stops)
+{
+    if (isset($fiber->to_read_buf)) {
+        $pos = strpos($fiber->to_read_buf, $stops);
+        if ($pos !== false) {
+            $buf = substr($fiber->to_read_buf, 0, $pos);
+            $fiber->to_read_buf = substr($fiber->to_read_buf, strlen($buf) + strlen($stops));
+
+            $ret = $fiber->resume($buf);
+            return run($fiber, $ret);
+        }
+    }
+
+    $fiber->to_read_stops = $stops;
+    Loop::onReadable($fd, function ($id, $fd, $fiber) {
+        $buf = socket_read($fd, 1024);
+
+        if ($buf === false && socket_last_error($fd) !== 11) {
+            Loop::cancel($id);
+            unset($fiber->to_read_stops);
+            unset($fiber->to_read_buf);
+            $ret = $fiber->resume(false);
+            return run($fiber, $ret);
+        }
+
+        if ($buf) {
+            $fiber->to_read_buf .= $buf;
+        }
+
+        $pos = strpos($fiber->to_read_buf, $fiber->to_read_stops);
+        if ($pos === false) {
+            return;
+        }
+
+        Loop::cancel($id);
+        $buf = substr($fiber->to_read_buf, 0, $pos);
+        $fiber->to_read_buf = substr($fiber->to_read_buf, strlen($buf) + strlen($fiber->to_read_stops));
+        unset($fiber->to_read_stops);
+
+        $ret = $fiber->resume($buf);
+        return run($fiber, $ret);
+    }, $fiber);
+}
+
+function await_write_all(\Fiber $fiber, $fd, $data)
+{
+    $len = socket_write($fd, $data);
+
+    if (($len == false && socket_last_error($fd) !== 11 /* EAGAIN */) || $len === strlen($data)) {
+        $ret = $fiber->resume($len);
+        return run($fiber, $ret);
+    }
+
+    $fiber->to_write_buf = substr($data, $len);
+    Loop::onWritable($fd, function ($id, $fd, $fiber) {
+        $buf = $fiber->to_write_buf;
+
+        $len = socket_write($fd, $buf);
+
+        if ($len === strlen($buf) || $len === false) {
+            Loop::cancel($id);
+            unset($fiber->to_write_buf);
+            $ret = $fiber->resume($len);
+            return run($fiber, $ret);
+        }
+
+        $fiber->to_write_buf = substr($buf, $len);
+    }, $fiber);
+}
+
+function await_sleep(\Fiber $fiber, $delay_ms)
+{
+    Loop::delay($delay_ms, function ($id, $fiber) {
+        Loop::cancel($id);
+        $ret = $fiber->resume();
+        run($fiber, $ret);
+    }, $fiber);
+}
+
 function run(\Fiber $fiber, $ret)
 {
     if ($fiber->status() !== \Fiber::STATUS_SUSPENDED) {
@@ -52,124 +179,15 @@ function run(\Fiber $fiber, $ret)
 
     switch ($type) {
     case AWAIT_READ_AT_MOST:
-        $fiber->to_read_len = $data;
-        Loop::onReadable($fd, function ($id, $fd, $fiber) {
-            Loop::cancel($id);
-            $buf = socket_read($fd, $fiber->to_read_len);
-            unset($fiber->to_read_len);
-            $ret = $fiber->resume($buf);
-            return run($fiber, $ret);
-        }, $fiber);
-        break;
+        return await_read_at_most($fiber, $fd, $data);
     case AWAIT_READ_BY_LENGTH:
-        if (isset($fiber->to_read_buf) && strlen($fiber->to_read_buf) >= $data) {
-            $buf = substr($fiber->to_read_buf, 0, $data);
-            $fiber->to_read_buf = substr($fiber->to_read_buf, $data);
-
-            $ret = $fiber->resume($buf);
-            return run($fiber, $ret);
-        } elseif (isset($fiber->to_read_buf)) {
-            $data -= strlen($fiber->to_read_buf);
-        }
-
-        $fiber->to_read_len = $data;
-        Loop::onReadable($fd, function ($id, $fd, $fiber) {
-            $buf = socket_read($fd, $fiber->to_read_len);
-
-            if ($buf) {
-                $fiber->to_read_buf .= $buf;
-            }
-
-            $buf_len = strlen($fiber->to_read_buf);
-            if ($buf_len !== false && $buf_len < $fiber->to_read_len) {
-                return;
-            }
-
-            if ($buf_len >= $fiber->to_read_len) {
-                Loop::cancel($id);
-
-                $buf = substr($fiber->to_read_buf, 0, $fiber->to_read_len);
-                $fiber->to_read_buf = substr($fiber->to_read_buf, $fiber->to_read_len);
-                $fiber->to_read_len = 0;
-
-                $ret = $fiber->resume($buf);
-                return run($fiber, $ret);
-            }
-        }, $fiber);
-        break;
+        return await_read_by_length($fiber, $fd, $data);
     case AWAIT_READ_BY_STOP:
-        if (isset($fiber->to_read_buf)) {
-            $pos = strpos($fiber->to_read_buf, $data);
-            if ($pos !== false) {
-                $buf = substr($fiber->to_read_buf, 0, $pos);
-                $fiber->to_read_buf = substr($fiber->to_read_buf, strlen($buf) + strlen($data));
-
-                $ret = $fiber->resume($buf);
-                return run($fiber, $ret);
-            }
-        }
-
-        $fiber->to_read_stops = $data;
-        Loop::onReadable($fd, function ($id, $fd, $fiber) {
-            $buf = socket_read($fd, 1024);
-
-            if ($buf === false && socket_last_error($fd) !== 11) {
-                Loop::cancel($id);
-                unset($fiber->to_read_stops);
-                unset($fiber->to_read_buf);
-                $ret = $fiber->resume(false);
-                return run($fiber, $ret);
-            }
-
-            if ($buf) {
-                $fiber->to_read_buf .= $buf;
-            }
-
-            $pos = strpos($fiber->to_read_buf, $fiber->to_read_stops);
-            if ($pos === false) {
-                return;
-            }
-
-            Loop::cancel($id);
-            $buf = substr($fiber->to_read_buf, 0, $pos);
-            $fiber->to_read_buf = substr($fiber->to_read_buf, strlen($buf) + strlen($fiber->to_read_stops));
-            unset($fiber->to_read_stops);
-
-            $ret = $fiber->resume($buf);
-            return run($fiber, $ret);
-        }, $fiber);
-        break;
+        return await_read_by_stop($fiber, $fd, $data);
     case AWAIT_WRITE_ALL:
-        $len = socket_write($fd, $data);
-
-        if (($len == false && socket_last_error($fd) !== 11 /* EAGAIN */) || $len === strlen($data)) {
-            $ret = $fiber->resume($len);
-            return run($fiber, $ret);
-        }
-
-        $fiber->to_write_buf = substr($data, $len);
-        Loop::onWritable($fd, function ($id, $fd, $fiber) {
-            $buf = $fiber->to_write_buf;
-
-            $len = socket_write($fd, $buf);
-
-            if ($len === strlen($buf) || $len === false) {
-                Loop::cancel($id);
-                unset($fiber->to_write_buf);
-                $ret = $fiber->resume($len);
-                return run($fiber, $ret);
-            }
-
-            $fiber->to_write_buf = substr($buf, $len);
-        }, $fiber);
-        break;
+        return await_write_all($fiber, $fd, $data);
     case AWAIT_SLEEP:
-        Loop::delay($data, function ($id, $fiber) {
-            Loop::cancel($id);
-            $ret = $fiber->resume();
-            run($fiber, $ret);
-        }, $fiber);
-        break;
+        return await_sleep($fiber, $data);
     }
 }
 
