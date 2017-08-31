@@ -8,12 +8,8 @@ const AWAIT_WRITE_ALL = 1;
 const AWAIT_SLEEP = 2;
 
 use Amp\Loop;
-use LibDNS\Messages\MessageFactory;
-use LibDNS\Messages\MessageTypes;
-use LibDNS\Records\QuestionFactory;
 use LibDNS\Records\ResourceQTypes;
-use LibDNS\Encoder\EncoderFactory;
-use LibDNS\Decoder\DecoderFactory;
+use Fiber\Dns\BasicResolver;
 
 function read0($fd, int $len, int $timeout_ms = 0)
 {
@@ -237,4 +233,9 @@ function run(\Fiber $fiber, $ret)
     case AWAIT_SLEEP:
         return await_sleep($fiber, $timeout_ms);
     }
+}
+
+function dig($name, $type = ResourceQTypes::A)
+{
+    return BasicResolver::init()->dig($name, $type);
 }

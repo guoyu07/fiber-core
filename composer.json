@@ -4,7 +4,7 @@
             "helper.php"
         ],
         "psr-4": {
-            "lv\\": "./src"
+            "Fiber\\": "./src"
         }
     },
     "require": {
