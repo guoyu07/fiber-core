@@ -2,6 +2,7 @@
 require __DIR__.'/vendor/autoload.php';
 
 use Amp\Loop;
+use Fiber\Helper as f;
 
 gc_disable();
 
@@ -14,7 +15,6 @@ socket_listen($server, 256);
 Loop::onReadable($server, function ($id, $server) {
     $client = socket_accept($server);
     socket_set_nonblock($client);
-    socket_setopt($client, SOL_SOCKET, SO_RCVBUF, 1);
 
     $fiber = new Fiber(function ($client) {
         $headers = f\find($client, "\r\n\r\n", 3000);
@@ -43,6 +43,10 @@ Loop::onReadable($server, function ($id, $server) {
         } elseif (substr($method, 0, 8) == 'GET /dig') {
             $ips = f\dig("www.baidu.com");
             $body = json_encode($ips);
+        } elseif (substr($method, 0, 9) == 'GET /head') {
+            $fd = f\connect('http://httpbin.org');
+            f\write($fd, "HEAD / HTTP/1.0\r\nAccept: */*\r\nHost: httpbin.org\r\nUser-Agent: HTTPie/0.9.9\r\n\r\n");
+            $body = f\read0($fd, 1024);
         }
 
         f\write($client, "HTTP/1.0 200 OK\r\nContent-Type:application/json\r\nContent-Length: ");

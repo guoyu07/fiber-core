@@ -88,8 +88,8 @@ class BasicResolver
             $_i = $i % \count($nameservers);
             socket_connect($socket, $nameservers[$_i], 53);
 
-            \f\write($socket, $this->encoder->encode($request));
-            $response = \f\read0($socket, 512, 100);
+            \Fiber\Helper\write($socket, $this->encoder->encode($request));
+            $response = \Fiber\Helper\read0($socket, 512, 100);
 
             try {
                 $response = $this->decoder->decode($response);

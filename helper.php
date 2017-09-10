@@ -1,15 +1,72 @@
 <?php
-namespace f;
+namespace Fiber\Helper;
 
 const AWAIT_READ_AT_MOST = 4;
 const AWAIT_READ_BY_LENGTH = 0;
 const AWAIT_READ_BY_STOP = 3;
 const AWAIT_WRITE_ALL = 1;
+const AWAIT_CONNECT = 5;
 const AWAIT_SLEEP = 2;
 
 use Amp\Loop;
 use LibDNS\Records\ResourceQTypes;
 use Fiber\Dns\BasicResolver;
+
+function connect(string $uri, int $timeout_ms = 0)
+{
+    $uri = parse_url($uri);
+
+    if (!$uri) {
+        throw new \InvalidArgumentException("invalid uri: $uri");
+    }
+
+    if ($uri['scheme'] !== 'tcp' && $uri['scheme'] !== 'http') {
+        throw new \UnexpectedValueException("unsupported schema: ".$uri['scheme']);
+    }
+
+    if (!$uri['port'] && $uri['schema'] !== 'http') {
+        $port = 80;
+    } else {
+        $port = (int) $uri['port'];
+    }
+
+    if (is_numeric($uri['host']['0'])) {
+        $ip = $uri['host'];
+        if (!@\inet_pton($ip)) {
+            throw new \InvalidArgumentException("invalid ip: $ip");
+        }
+    } else {
+        $domain =$uri['host'];
+        $ips = dig($domain);
+        if (!$ips) {
+            throw new \InvalidArgumentException("invalid domain: $domain");
+        }
+        $ip = $ips[0]['ip'];
+    }
+
+    $fd = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+    if ($fd === false) {
+        return false;
+    }
+
+    if (!socket_set_nonblock($fd)) {
+        socket_close($fd);
+        return false;
+    }
+
+    $status = socket_connect($fd, $ip, $port);
+
+    if ($status === true) {
+        return $fd;
+    }
+
+    if ($status === false && socket_last_error($fd) !== 115 /* EINPROGRESS */) {
+        socket_close($fd);
+        return false;
+    }
+
+    return \Fiber::yield([AWAIT_CONNECT, $fd, null, $timeout_ms]);
+}
 
 function read0($fd, int $len, int $timeout_ms = 0)
 {
@@ -205,6 +262,17 @@ function await_write_all(\Fiber $fiber, $fd, $data, $timeout_ms)
     await_timeout($fiber, $id, $timeout_ms);
 }
 
+function await_connect(\Fiber $fiber, $fd, $timeout_ms)
+{
+    $id = Loop::onWritable($fd, function ($id, $fd, $fiber) {
+        Loop::cancel($id);
+        $ret = $fiber->resume($fd);
+        return run($fiber, $ret);
+    }, $fiber);
+
+    await_timeout($fiber, $id, $timeout_ms);
+}
+
 function await_sleep(\Fiber $fiber, $delay_ms)
 {
     Loop::delay($delay_ms, function ($id, $fiber) {
@@ -230,6 +298,8 @@ function run(\Fiber $fiber, $ret)
         return await_read_by_stop($fiber, $fd, $data, $timeout_ms);
     case AWAIT_WRITE_ALL:
         return await_write_all($fiber, $fd, $data, $timeout_ms);
+    case AWAIT_CONNECT:
+        return await_connect($fiber, $fd, $timeout_ms);
     case AWAIT_SLEEP:
         return await_sleep($fiber, $timeout_ms);
     }
