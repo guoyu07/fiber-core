@@ -17,9 +17,7 @@ Loop::onReadable($server, function ($id, $server) {
     socket_setopt($client, SOL_SOCKET, SO_RCVBUF, 1);
 
     $fiber = new Fiber(function ($client) {
-        echo microtime(true), "\n";
         $headers = f\find($client, "\r\n\r\n", 3000);
-        echo microtime(true), "\n";
         if (!$headers) {
             return socket_close($client);
         }

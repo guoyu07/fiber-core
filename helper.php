@@ -13,27 +13,27 @@ use Fiber\Dns\BasicResolver;
 
 function read0($fd, int $len, int $timeout_ms = 0)
 {
-    return await [AWAIT_READ_AT_MOST, $fd, $len, $timeout_ms];
+    return \Fiber::yield([AWAIT_READ_AT_MOST, $fd, $len, $timeout_ms]);
 }
 
 function read($fd, int $len, int $timeout_ms = 0)
 {
-    return await [AWAIT_READ_BY_LENGTH, $fd, $len, $timeout_ms];
+    return \Fiber::yield([AWAIT_READ_BY_LENGTH, $fd, $len, $timeout_ms]);
 }
 
 function find($fd, string $stops, int $timeout_ms = 0)
 {
-    return await [AWAIT_READ_BY_STOP, $fd, $stops, $timeout_ms];
+    return \Fiber::yield([AWAIT_READ_BY_STOP, $fd, $stops, $timeout_ms]);
 }
 
 function write($fd, string $buf, int $timeout_ms = 0)
 {
-    return await [AWAIT_WRITE_ALL, $fd, $buf, $timeout_ms];
+    return \Fiber::yield([AWAIT_WRITE_ALL, $fd, $buf, $timeout_ms]);
 }
 
 function sleep(int $delay_ms)
 {
-    await [AWAIT_SLEEP, null, null, $delay_ms];
+     \Fiber::yield([AWAIT_SLEEP, null, null, $delay_ms]);
 }
 
 function await_timeout(\Fiber $fiber, $id, $timeout_ms)
@@ -176,7 +176,7 @@ function await_write_all(\Fiber $fiber, $fd, $data, $timeout_ms)
 {
     $len = socket_write($fd, $data);
 
-    if (($len == false && socket_last_error($fd) !== 11 /* EAGAIN */) || $len === strlen($data)) {
+    if (($len === false && socket_last_error($fd) !== 11 /* EAGAIN */) || $len === strlen($data)) {
         $ret = $fiber->resume($len);
         return run($fiber, $ret);
     }
