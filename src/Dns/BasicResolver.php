@@ -16,6 +16,7 @@ class BasicResolver
     private $nameservers;
     private $attempts = 3;
     private $timeout_ms = 100;
+    private $known_hosts = [];
 
     /**
      * @var QuestionFactory
@@ -61,14 +62,21 @@ class BasicResolver
         $this->message_factory = new MessageFactory;
         $this->encoder = (new EncoderFactory)->create();
         $this->decoder = (new DecoderFactory)->create();
+
+        $this->initKnownHosts();
     }
 
-    public function dig(string $name, $type = ResourceQTypes::A)
+    public function dig(string $name, $type = ResourceQTypes::A) : array
     {
         if (@\inet_pton($name)) {
             return [[
                 'ip' => $name,
             ]];
+        }
+
+        $ip = $this->getKnownHost($name, $type);
+        if ($ip) {
+            return [$ip];
         }
 
         $question = $this->question_factory->create(ResourceQTypes::A);
@@ -102,6 +110,7 @@ class BasicResolver
             $ips = [];
             /** @var \LibDNS\Records\Resource $record */
             foreach ($response->getAnswerRecords() as $record) {
+                // TODO support ttl
                 if ($record->getType() !== $type) {
                     continue;
                 }
@@ -122,7 +131,7 @@ class BasicResolver
         }
 
         $content = file_get_contents('/etc/resolv.conf');
-        $lines = \explode("\n", $content);
+        $lines = \explode(PHP_EOL, $content);
         $config = [
             'nameservers' => [],
             'timeout' => 0,
@@ -130,6 +139,10 @@ class BasicResolver
         ];
 
         foreach ($lines as $line) {
+            if (isset($line[0]) && $line[0] === '#') {
+                continue;
+            }
+
             $line = \preg_split('#\s+#', $line, 2);
 
             if (!isset($line[1])) {
@@ -168,5 +181,44 @@ class BasicResolver
         self::$default_instance = $default_instance;
 
         return $default_instance;
+    }
+
+    private function initKnownHosts()
+    {
+        $content = file_get_contents('/etc/hosts');
+        $lines = \explode(PHP_EOL, $content);
+
+        foreach ($lines as $line) {
+            if (isset($line[0]) && $line[0] === '#') {
+                continue;
+            }
+
+            $line = \preg_split('#\s+#', $line);
+
+            if (!isset($line[1])) {
+                continue;
+            }
+
+            $ip = array_shift($line);
+
+            if (strpos($ip, ':') !== false) {
+                continue; // TODO support ipv6
+            }
+
+            foreach ($line as $name) {
+                $this->known_hosts[$name] = [
+                    ResourceQTypes::A => [
+                        'ip' => $ip,
+                    ],
+                ];
+            }
+        }
+    }
+
+    private function getKnownHost(string $name, $type = ResourceQTypes::A)
+    {
+        if (isset($this->known_hosts[$name][$type])) {
+            return $this->known_hosts[$name][$type];
+        }
     }
 }
