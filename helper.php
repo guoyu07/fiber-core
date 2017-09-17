@@ -75,6 +75,10 @@ function read0($fd, int $len, int $timeout_ms = 0)
 
 function read($fd, int $len, int $timeout_ms = 0)
 {
+    if ($len === 0) {
+        return '';
+    }
+
     return \Fiber::yield([AWAIT_READ_BY_LENGTH, $fd, $len, $timeout_ms]);
 }
 
@@ -104,8 +108,7 @@ function await_timeout(\Fiber $fiber, $id, $timeout_ms)
             Loop::cancel($id);
             unset($fiber->$id);
 
-            $ret = $fiber->resume(false);
-            return run($fiber, $ret);
+            return run($fiber, false);
         }
     }, $fiber);
 }
@@ -122,8 +125,7 @@ function await_read_at_most(\Fiber $fiber, $fd, $len, $timeout_ms)
 
         $buf = socket_read($fd, $fiber->to_read_len);
         unset($fiber->to_read_len);
-        $ret = $fiber->resume($buf);
-        return run($fiber, $ret);
+        return run($fiber, $buf);
     }, $fiber);
 
     await_timeout($fiber, $id, $timeout_ms);
@@ -135,8 +137,7 @@ function await_read_by_length(\Fiber $fiber, $fd, $len, $timeout_ms)
         $buf = substr($fiber->to_read_buf, 0, $len);
         $fiber->to_read_buf = substr($fiber->to_read_buf, $len);
 
-        $ret = $fiber->resume($buf);
-        return run($fiber, $ret);
+        return run($fiber, $buf);
     } elseif (isset($fiber->to_read_buf)) {
         $len -= strlen($fiber->to_read_buf);
     }
@@ -165,8 +166,7 @@ function await_read_by_length(\Fiber $fiber, $fd, $len, $timeout_ms)
             $fiber->to_read_buf = substr($fiber->to_read_buf, $fiber->to_read_len);
             $fiber->to_read_len = 0;
 
-            $ret = $fiber->resume($buf);
-            return run($fiber, $ret);
+            return run($fiber, $buf);
         }
     }, $fiber);
 
@@ -181,8 +181,7 @@ function await_read_by_stop(\Fiber $fiber, $fd, $stops, $timeout_ms)
             $buf = substr($fiber->to_read_buf, 0, $pos);
             $fiber->to_read_buf = substr($fiber->to_read_buf, strlen($buf) + strlen($stops));
 
-            $ret = $fiber->resume($buf);
-            return run($fiber, $ret);
+            return run($fiber, $buf);
         }
     }
 
@@ -199,8 +198,7 @@ function await_read_by_stop(\Fiber $fiber, $fd, $stops, $timeout_ms)
 
             unset($fiber->to_read_stops);
             unset($fiber->to_read_buf);
-            $ret = $fiber->resume(false);
-            return run($fiber, $ret);
+            return run($fiber, false);
         }
 
         if ($buf) {
@@ -222,8 +220,7 @@ function await_read_by_stop(\Fiber $fiber, $fd, $stops, $timeout_ms)
         $fiber->to_read_buf = substr($fiber->to_read_buf, strlen($buf) + strlen($fiber->to_read_stops));
         unset($fiber->to_read_stops);
 
-        $ret = $fiber->resume($buf);
-        return run($fiber, $ret);
+        return run($fiber, $buf);
     }, $fiber);
 
     await_timeout($fiber, $id, $timeout_ms);
@@ -234,8 +231,7 @@ function await_write_all(\Fiber $fiber, $fd, $data, $timeout_ms)
     $len = socket_write($fd, $data);
 
     if (($len === false && socket_last_error($fd) !== 11 /* EAGAIN */) || $len === strlen($data)) {
-        $ret = $fiber->resume($len);
-        return run($fiber, $ret);
+        return run($fiber, $len);
     }
 
     $fiber->to_write_buf = substr($data, $len);
@@ -252,8 +248,7 @@ function await_write_all(\Fiber $fiber, $fd, $data, $timeout_ms)
             }
 
             unset($fiber->to_write_buf);
-            $ret = $fiber->resume($len);
-            return run($fiber, $ret);
+            return run($fiber, $len);
         }
 
         $fiber->to_write_buf = substr($buf, $len);
@@ -266,8 +261,7 @@ function await_connect(\Fiber $fiber, $fd, $timeout_ms)
 {
     $id = Loop::onWritable($fd, function ($id, $fd, $fiber) {
         Loop::cancel($id);
-        $ret = $fiber->resume($fd);
-        return run($fiber, $ret);
+        return run($fiber, $fd);
     }, $fiber);
 
     await_timeout($fiber, $id, $timeout_ms);
@@ -276,32 +270,37 @@ function await_connect(\Fiber $fiber, $fd, $timeout_ms)
 function await_sleep(\Fiber $fiber, $delay_ms)
 {
     Loop::delay($delay_ms, function ($id, $fiber) {
-        $ret = $fiber->resume();
-        run($fiber, $ret);
+        run($fiber, null);
     }, $fiber);
 }
 
-function run(\Fiber $fiber, $ret)
+function run(\Fiber $fiber, $arg)
 {
-    if ($fiber->status() !== \Fiber::STATUS_SUSPENDED) {
-        return;
-    }
+    try {
+        list($type, $fd, $data, $timeout_ms) = $fiber->resume($arg);
 
-    list($type, $fd, $data, $timeout_ms) = $ret;
+        if ($fiber->status() !== \Fiber::STATUS_SUSPENDED) {
+            return;
+        }
 
-    switch ($type) {
-    case AWAIT_READ_AT_MOST:
-        return await_read_at_most($fiber, $fd, $data, $timeout_ms);
-    case AWAIT_READ_BY_LENGTH:
-        return await_read_by_length($fiber, $fd, $data, $timeout_ms);
-    case AWAIT_READ_BY_STOP:
-        return await_read_by_stop($fiber, $fd, $data, $timeout_ms);
-    case AWAIT_WRITE_ALL:
-        return await_write_all($fiber, $fd, $data, $timeout_ms);
-    case AWAIT_CONNECT:
-        return await_connect($fiber, $fd, $timeout_ms);
-    case AWAIT_SLEEP:
-        return await_sleep($fiber, $timeout_ms);
+        switch ($type) {
+        case AWAIT_READ_AT_MOST:
+            return await_read_at_most($fiber, $fd, $data, $timeout_ms);
+        case AWAIT_READ_BY_LENGTH:
+            return await_read_by_length($fiber, $fd, $data, $timeout_ms);
+        case AWAIT_READ_BY_STOP:
+            return await_read_by_stop($fiber, $fd, $data, $timeout_ms);
+        case AWAIT_WRITE_ALL:
+            return await_write_all($fiber, $fd, $data, $timeout_ms);
+        case AWAIT_CONNECT:
+            return await_connect($fiber, $fd, $timeout_ms);
+        case AWAIT_SLEEP:
+            return await_sleep($fiber, $timeout_ms);
+        }
+    } catch (\Throwable $e) {
+        echo 'Uncaught Exception: ', $e->getMessage(),
+            ' in ', $e->getFile(), ' +', $e->getLine(),
+            "\nStack trace\n", $e->getTraceAsString(), "\n";
     }
 }
 

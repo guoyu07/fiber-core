@@ -57,9 +57,7 @@ Loop::onReadable($server, function ($id, $server) {
         socket_close($client);
     });
 
-    $ret = $fiber->resume($client);
-
-    f\run($fiber, $ret);
+    f\run($fiber, $client);
 });
 
 Loop::run();
