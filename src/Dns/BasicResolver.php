@@ -101,9 +101,7 @@ class BasicResolver
 
             try {
                 $response = $this->decoder->decode($response);
-            } catch (\InvalidArgumentException $e) {
-                continue;
-            } catch (\UnexpectedValueException $e) {
+            } catch (\Throwable $e) {
                 continue;
             }
 
