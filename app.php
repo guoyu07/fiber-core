@@ -17,7 +17,7 @@ Loop::onReadable($server, function ($id, $server) {
     socket_set_nonblock($client);
 
     $fiber = new Fiber(function ($client) {
-        $headers = f\find($client, "\r\n\r\n", 3000);
+        $headers = f\find($client, "\r\n\r\n");
         if (!$headers) {
             return socket_close($client);
         }
@@ -44,9 +44,9 @@ Loop::onReadable($server, function ($id, $server) {
             $ips = f\dig("www.baidu.com");
             $body = json_encode($ips);
         } elseif (substr($method, 0, 9) == 'GET /head') {
-            $fd = f\connect('http://httpbin.org');
-            f\write($fd, "HEAD / HTTP/1.0\r\nAccept: */*\r\nHost: httpbin.org\r\nUser-Agent: HTTPie/0.9.9\r\n\r\n");
-            $body = f\read0($fd, 1024);
+            $http = \Fiber\Http\Client::create(['base_uri' => 'http://myip.ipip.net']);
+            $response = $http->request('GET', '/');
+            $body = $response->getBody();
         }
 
         f\write($client, "HTTP/1.0 200 OK\r\nContent-Type:application/json\r\nContent-Length: ");
