@@ -12,6 +12,21 @@ socket_set_nonblock($server);
 socket_bind($server, '0.0.0.0', 8080);
 socket_listen($server, 256);
 
+function mysql()
+{
+    $config = new \Fiber\Mysql\Config();
+    $config->user = 'root';
+    $config->pass = 'hjkl';
+    $config->db   = 'test';
+    $config->host = '127.0.0.1';
+    $config->port = 3306;
+
+    $db = new \Fiber\Mysql\Connection($config);
+    $rows = $db->query('select * from books limit 2');
+
+    return json_encode($rows, JSON_UNESCAPED_UNICODE);
+}
+
 function biz($client)
 {
     $headers = f\find($client, "\r\n\r\n");
@@ -35,12 +50,14 @@ function biz($client)
 
     $body = f\read($client, $length);
 
-    if (substr($method, 0, 10) == 'GET /sleep') {
+    if (stripos($method, 'GET /sleep') === 0) {
         f\sleep(9000);
-    } elseif (substr($method, 0, 8) == 'GET /dig') {
+    } elseif (stripos($method, 'GET /db') === 0) {
+        $body = mysql();
+    } elseif (stripos($method, 'GET /dig') === 0) {
         $ips = f\dig("www.baidu.com");
         $body = json_encode($ips);
-    } elseif (substr($method, 0, 9) == 'GET /head') {
+    } elseif (stripos($method, 'GET /head') === 0) {
         $http = \Fiber\Http\Client::create(['base_uri' => 'http://myip.ipip.net']);
         $response = $http->request('GET', '/');
         $body = $response->getBody();
@@ -61,7 +78,9 @@ Loop::onReadable($server, function ($id, $server) {
     $fiber = new Fiber(function ($client) {
         try {
             biz($client);
-        } catch (Throwable $t) {
+        } catch (\Throwable $t) {
+            echo $t->getMessage(),' ',$t->getFile(),' ',$t->getLine(), "\n",
+                $t->getTraceAsString(), "\n";
         }
     });
 
