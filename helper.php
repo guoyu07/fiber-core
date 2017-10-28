@@ -274,7 +274,7 @@ function await_sleep(\Fiber $fiber, $delay_ms)
     }, $fiber);
 }
 
-function run(\Fiber $fiber, $arg)
+function run(\Fiber $fiber, $arg = null)
 {
     try {
         list($type, $fd, $data, $timeout_ms) = $fiber->resume($arg);
