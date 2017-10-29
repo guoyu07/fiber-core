@@ -2,7 +2,7 @@
     "name": "fiberphp/core",
     "autoload": {
         "files": [
-            "helper.php"
+            "./src/Util/functions.php"
         ],
         "psr-4": {
             "Fiber\\": "./src"
@@ -10,7 +10,7 @@
     },
     "require": {
         "amphp/amp": "^2",
-         "daverandom/libdns": "v2.0.0-a1",
+         "daverandom/libdns": "^v2.0.0-a1",
         "guzzlehttp/guzzle": "^6.3"
     }
 }
