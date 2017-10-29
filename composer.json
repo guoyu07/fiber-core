@@ -10,7 +10,6 @@
     },
     "require": {
         "amphp/amp": "^2",
-         "daverandom/libdns": "^v2.0.0-a1",
-        "guzzlehttp/guzzle": "^6.3"
+        "daverandom/libdns": "^v2.0.0-a1"
     }
 }
