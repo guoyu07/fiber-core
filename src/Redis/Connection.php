@@ -6,8 +6,7 @@ use Fiber\Helper as f;
 
 class Connection
 {
-    private $server;
-    private $socket;
+    use \Fiber\Util\LazySocket;
 
     public function __construct(string $host, int $port = 6379)
     {

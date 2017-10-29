@@ -1,4 +1,5 @@
 <?php
+
 namespace Fiber\Mysql;
 
 class Result implements \Iterator, \JsonSerializable

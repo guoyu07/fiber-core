@@ -1,6 +1,6 @@
 <?php
 
-namespace Fiber\Redis;
+namespace Fiber\Memcache;
 
 class Exception extends \Exception
 {

@@ -1,4 +1,5 @@
 <?php
+
 namespace Fiber\Mysql;
 
 class Exception extends \Exception

@@ -1,4 +1,5 @@
 <?php
+
 namespace Fiber\Mysql;
 
 use Fiber\Helper as f;
