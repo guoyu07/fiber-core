@@ -89,6 +89,7 @@ class BasicResolver
         $attempts = $this->attempts;
         $nameservers = $this->nameservers;
 
+        $ips = [];
         for ($i = 0; $i < $attempts; $i++) {
             $socket = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
             socket_set_nonblock($socket);
