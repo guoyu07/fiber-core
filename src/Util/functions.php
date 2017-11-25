@@ -304,6 +304,13 @@ function run(\Fiber $fiber, $arg = null)
     }
 }
 
+function once($func)
+{
+    Loop::run(function () use($func) {
+        run(new \Fiber($func));
+    });
+}
+
 function dig($name, $type = ResourceQTypes::A)
 {
     return BasicResolver::init()->dig($name, $type);
