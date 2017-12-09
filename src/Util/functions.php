@@ -310,11 +310,10 @@ function run(\Fiber $fiber, $arg = null)
     }
 }
 
-function once($func)
+function once($func, $arg = null)
 {
-    Loop::run(function () use($func) {
-        run(new \Fiber($func));
-    });
+    run(new \Fiber($func), $arg);
+    Loop::run();
 }
 
 function dig($name, $type = ResourceQTypes::A)
