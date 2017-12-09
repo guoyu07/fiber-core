@@ -12,10 +12,17 @@ trait LazySocket
 
     private function getSocket()
     {
-        if (!$this->socket) {
-            $this->socket = f\connect($this->server);
+        if ($this->socket) {
+            return $this->socket;
         }
 
-        return $this->socket;
+        $socket = f\connect($this->server);
+        if (!$socket) {
+            throw new \RuntimeException("Connect to $this->server failed");
+        }
+
+        $this->socket = $socket;
+
+        return $socket;
     }
 }

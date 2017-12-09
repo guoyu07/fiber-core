@@ -65,7 +65,12 @@ function connect(string $uri, int $timeout_ms = 0)
         return false;
     }
 
-    return \Fiber::yield([AWAIT_CONNECT, $fd, null, $timeout_ms]);
+    $status = \Fiber::yield([AWAIT_CONNECT, $fd, null, $timeout_ms]);
+    if ($status) {
+        return $fd;
+    }
+
+    return 0;
 }
 
 function read0($fd, int $len, int $timeout_ms = 0)
@@ -261,7 +266,8 @@ function await_connect(\Fiber $fiber, $fd, $timeout_ms)
 {
     $id = Loop::onWritable($fd, function ($id, $fd, $fiber) {
         Loop::cancel($id);
-        return run($fiber, $fd);
+        $status = @socket_getpeername($fd, $addr, $port);
+        return run($fiber, $status);
     }, $fiber);
 
     await_timeout($fiber, $id, $timeout_ms);
