@@ -73,6 +73,47 @@ function connect(string $uri, int $timeout_ms = 0)
     return 0;
 }
 
+function listen(string $uri, $func = null, int $backlog = 0)
+{
+    $uri = parse_url($uri);
+
+    if (!$uri) {
+        throw new \InvalidArgumentException("invalid uri: $uri");
+    }
+
+    if (!isset($uri['port'])) {
+        throw new \UnexpectedValueException("port is required");
+    }
+
+    $port = $uri['port'];
+
+    if ($uri['scheme'] !== 'tcp') {
+        throw new \UnexpectedValueException("unsupported schema: ".$uri['scheme']);
+    }
+
+    $ip = $uri['host'];
+    if (!@\inet_pton($ip)) {
+        throw new \InvalidArgumentException("invalid ip: $ip");
+    }
+
+    $server = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+    socket_set_option($server, SOL_SOCKET, SO_REUSEADDR, 1);
+    socket_set_nonblock($server);
+    socket_bind($server, $ip, $port);
+    socket_listen($server, $backlog);
+
+    if ($func) {
+        Loop::onReadable($server, function ($id, $server, $func) {
+            $client = socket_accept($server);
+            socket_set_nonblock($client);
+
+            run(new \Fiber($func), $client);
+        }, $func);
+    }
+
+    return $server;
+}
+
 function read0($fd, int $len, int $timeout_ms = 0)
 {
     return \Fiber::yield([AWAIT_READ_AT_MOST, $fd, $len, $timeout_ms]);
@@ -310,6 +351,11 @@ function run(\Fiber $fiber, $arg = null)
     }
 }
 
+function go($func, $arg = null)
+{
+    run(new \Fiber($func), $arg);
+}
+
 function once($func, $arg = null)
 {
     run(new \Fiber($func), $arg);
@@ -319,4 +365,9 @@ function once($func, $arg = null)
 function dig($name, $type = ResourceQTypes::A)
 {
     return BasicResolver::init()->dig($name, $type);
+}
+
+function loop()
+{
+    Loop::run();
 }
