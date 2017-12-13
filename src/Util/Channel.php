@@ -33,4 +33,10 @@ class Channel
 
         return $this->data;
     }
+
+    public function __destruct()
+    {
+        socket_close($this->sockets[0]);
+        socket_close($this->sockets[1]);
+    }
 }
