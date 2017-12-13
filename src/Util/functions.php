@@ -353,7 +353,9 @@ function run(\Fiber $fiber, $arg = null)
 
 function go($func, $arg = null)
 {
-    run(new \Fiber($func), $arg);
+    Loop::defer(function () use($func, $arg) {
+        run(new \Fiber($func), $arg);
+    });
 }
 
 function once($func, $arg = null)
